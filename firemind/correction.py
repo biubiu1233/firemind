@@ -209,6 +209,8 @@ def parse_miss(text: str) -> tuple[float, float]:
 
 
 def _current_mil(solution: FiringSolution, arc: str) -> float | None:
+    if solution.mil_dial is not None:
+        return float(solution.mil_dial)
     if solution.weapon_id == "mortar" and solution.elevation_single:
         return solution.elevation_single.mil or solution.elevation_single.min_mil
     if arc == "high" and solution.elevation_high:
@@ -216,7 +218,9 @@ def _current_mil(solution: FiringSolution, arc: str) -> float | None:
     if arc == "low" and solution.elevation_low:
         return solution.elevation_low.mil or solution.elevation_low.min_mil
     sol = solution.elevation_low or solution.elevation_high or solution.elevation_single
-    return sol.mil or (sol.min_mil if sol else None)
+    if sol is None:
+        return None
+    return sol.mil or sol.min_mil
 
 
 def suggest_correction_from_miss(
@@ -336,11 +340,51 @@ def suggest_correction(
 
 
 def _aim_point_from_impact(target: Point, impact: Point) -> Point:
-    """落点偏哪，下一发瞄准点向反方向对称修正（地图平面）。"""
+    """与 wardogs 社区计算器一致：瞄准点 += (目标 − 落点)。"""
     return Point(
         target.x + (target.x - impact.x),
         target.y + (target.y - impact.y),
     )
+
+
+def _point_at_az_range_m(origin: Point, azimuth_deg: float, range_m: float) -> Point:
+    dist_world = range_m / METERS_PER_UNIT
+    az = math.radians(azimuth_deg)
+    return Point(
+        origin.x + math.sin(az) * dist_world,
+        origin.y + math.cos(az) * dist_world,
+    )
+
+
+def _azimuth_delta_deg(from_deg: float, to_deg: float) -> float:
+    return ((to_deg - from_deg + 180) % 360) - 180
+
+
+def _lateral_azimuth_consistent(lateral_m: float, old_az: float, new_az: float) -> bool:
+    """落点偏左 → 方位应增大（小角），偏右 → 方位应减小；不一致时勿采用射表方位。"""
+    if abs(lateral_m) < 1:
+        return True
+    delta = _azimuth_delta_deg(old_az, new_az)
+    return delta * (-lateral_m) >= 0 or abs(delta) < 0.05
+
+
+def _compute_solution_to_point(
+    engine: BallisticsEngine,
+    solution: FiringSolution,
+    aim: Point,
+    use_arc: str,
+) -> FiringSolution | None:
+    try:
+        return engine.compute(
+            solution.origin,
+            aim,
+            weapon_id=solution.weapon_id,
+            preferred_arc=use_arc,
+            gun_alt=solution.gun_alt,
+            target_alt=solution.target_alt,
+        )
+    except (ValueError, TypeError):
+        return None
 
 
 def suggest_correction_from_impact(
@@ -360,54 +404,82 @@ def suggest_correction_from_impact(
         or solution.preferred_arc
         or ("high" if solution.elevation_low is None else "low")
     )
-    aim = _aim_point_from_impact(solution.target, impact)
-    try:
-        new_sol = engine.compute(
-            solution.origin,
-            aim,
-            weapon_id=solution.weapon_id,
-            preferred_arc=use_arc,
-            gun_alt=solution.gun_alt,
-            target_alt=solution.target_alt,
-        )
-    except (ValueError, TypeError):
-        new_sol = None
-
-    if new_sol and new_sol.sight_rng_m is not None and new_sol.mil_dial is not None:
-        old_mil = _current_mil(solution, use_arc) or solution.mil_dial
-        steps = [
-            analysis.map_summary,
-            analysis.line_summary,
-            f"修正瞄准点 → x{aim.x:.2f} y{aim.y:.2f}（射表重算，RNG/MIL 成对）",
-        ]
-        if abs(analysis.lateral_m) >= 1:
-            steps.append(
-                f"方位 {solution.azimuth_deg:.1f}° → {new_sol.azimuth_deg:.1f}°"
-            )
-        if abs(analysis.range_m) >= 80:
-            steps.append(
-                "偏差较大：请确认游戏内高/低弹道与 FireMind 本次弹道一致。"
-            )
-        return CorrectionResult(
-            lateral_m=analysis.lateral_m,
-            range_m=analysis.range_m,
-            new_azimuth_deg=new_sol.azimuth_deg,
-            mil_delta=(new_sol.mil_dial - old_mil) if old_mil is not None else None,
-            new_mil=float(new_sol.mil_dial),
-            new_rng_m=new_sol.sight_rng_m,
-            arc=use_arc,
-            explanation="落点修正（射表重算）",
-            steps=steps,
-            miss_analysis=analysis,
-        )
-
-    return suggest_correction_from_miss(
+    base = suggest_correction_from_miss(
         solution,
         analysis.lateral_m,
         analysis.range_m,
         engine,
         arc,
         miss_analysis=analysis,
+    )
+    old_mil = _current_mil(solution, use_arc) or solution.mil_dial
+    new_az = base.new_azimuth_deg if abs(analysis.lateral_m) >= 1 else solution.azimuth_deg
+    new_rng = base.new_rng_m
+    new_mil = base.new_mil
+    steps = list(base.steps)
+    lat_only = abs(analysis.lateral_m) >= 1 and abs(analysis.range_m) < 10
+    range_only = abs(analysis.range_m) >= 1 and abs(analysis.lateral_m) < 10
+    combined = abs(analysis.lateral_m) >= 1 and abs(analysis.range_m) >= 1
+
+    if lat_only:
+        # 纯侧向：只转方位，左/右 RNG·MIL 保持首发成对读数（社区试射习惯）
+        new_rng = solution.sight_rng_m
+        new_mil = float(solution.mil_dial) if solution.mil_dial is not None else new_mil
+        steps.append(
+            f"侧向修正：方位 {solution.azimuth_deg:.1f}° → {new_az:.1f}°；"
+            f"RNG/MIL 仍用首发 {new_rng}/{round(new_mil) if new_mil else '—'}"
+        )
+    elif range_only:
+        aim_pt = _point_at_az_range_m(
+            solution.origin,
+            new_az or solution.azimuth_deg,
+            solution.distance_m + analysis.range_m,
+        )
+        rs = _compute_solution_to_point(engine, solution, aim_pt, use_arc)
+        if rs and rs.sight_rng_m is not None and rs.mil_dial is not None:
+            new_az = rs.azimuth_deg
+            new_rng = rs.sight_rng_m
+            new_mil = float(rs.mil_dial)
+            steps.append(
+                f"距离修正（射表重算）：RNG {solution.sight_rng_m}→{new_rng}，"
+                f"MIL {round(old_mil or 0)}→{round(new_mil)}"
+            )
+    elif combined:
+        corrected = _aim_point_from_impact(solution.target, impact)
+        rs = _compute_solution_to_point(engine, solution, corrected, use_arc)
+        if rs and rs.sight_rng_m is not None and rs.mil_dial is not None:
+            cand_az = rs.azimuth_deg
+            if _lateral_azimuth_consistent(
+                analysis.lateral_m, solution.azimuth_deg, cand_az
+            ):
+                new_az = cand_az
+            elif new_az is not None:
+                steps.append(
+                    "合并修正：方位采用沿炮线小角修正（与地图落点读数一致）"
+                )
+            new_rng = rs.sight_rng_m
+            new_mil = float(rs.mil_dial)
+            steps.append(
+                f"合并瞄准 x{corrected.x:.2f} y{corrected.y:.2f}（射表重算 RNG/MIL）"
+            )
+
+    mil_delta = None
+    if old_mil is not None and new_mil is not None and abs(analysis.range_m) >= 1:
+        mil_delta = new_mil - old_mil
+
+    explanation = "；".join(steps)
+    return CorrectionResult(
+        lateral_m=analysis.lateral_m,
+        range_m=analysis.range_m,
+        new_azimuth_deg=new_az if abs(analysis.lateral_m) >= 1 else None,
+        mil_delta=mil_delta,
+        new_mil=new_mil if abs(analysis.range_m) >= 1 else None,
+        new_rng_m=new_rng if abs(analysis.range_m) >= 1 else None,
+        arc=use_arc,
+        explanation=explanation,
+        steps=steps,
+        miss_analysis=analysis,
+        altitude_hint=base.altitude_hint,
     )
 
 

@@ -12,11 +12,12 @@ from typing import Any
 
 from .coords import extract_coord_pairs
 
-PROMPT_CROSSHAIR = """WARDOGS 战术地图截图（卫星图 + 白色十字准星）。
-十字准星旁有白色小字坐标，常见布局：y 在十字上方或下方（如 y31.76），x 在十字左侧或右侧（如 x84.71），必须读成一对。
-只读十字准星中心对应的那一组 x、y（约 0~163.84，可小数）。不要读聊天、单位列表、其它标记。
-只输出 JSON：
-{"points":[{"x":84.71,"y":31.76,"label":"unknown"}]}"""
+PROMPT_CROSSHAIR = """WARDOGS 战术地图截图。地图视图里有十字准星（+ 或瞄准十字），十字附近常有白色标签：x93.53 与 y36.54（可能在十字左右或上下）。
+你的任务：找到十字准星所指向的那一组 x、y 游戏坐标（范围约 0~163.84，可带小数）。
+不要读聊天、列表、其它标记点的坐标；只要十字准星这一点。
+只输出 JSON，不要其它文字：
+{"points":[{"x":93.53,"y":36.54,"label":"unknown"}]}
+label 可选 gun|target|impact|unknown。"""
 
 
 def ocr_available() -> bool:
@@ -120,7 +121,4 @@ def ocr_map_image(
             out["points"] = [pick]
     if pick and role in ("gun", "target", "impact"):
         out[role] = pick
-    if not pick:
-        out["error"] = "no_coordinates_detected"
-        out["model_preview"] = (text or "")[:280]
     return out
