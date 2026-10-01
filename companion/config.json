@@ -1,0 +1,23 @@
+{
+  "api_url": "https://firemind-pvgm.onrender.com",
+  "weapon": "spg",
+  "arc": "auto",
+  "monitor": 1,
+  "correction_mode": "single",
+  "show_parallel_dials": true,
+  "use_altitude_hint": true,
+  "hotkeys": {
+    "gun": "f1",
+    "target": "f2",
+    "impact": "f3",
+    "impact2": "f4",
+    "toggle_ui": "f12"
+  },
+  "crop_left_px": 460,
+  "ocr_max_px": 1600,
+  "dual_offset_deg": 90,
+  "layer_hull": true,
+  "baseline_pitch": true,
+  "layer_asl": true,
+  "hull_heading_deg": ""
+}
