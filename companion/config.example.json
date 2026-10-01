@@ -1,0 +1,16 @@
+{
+  "api_url": "https://你的-firemind.onrender.com",
+  "weapon": "spg",
+  "arc": "auto",
+  "monitor": 1,
+  "crop_left_px": 460,
+  "correction_mode": "single",
+  "dual_offset_deg": 90,
+  "hotkeys": {
+    "gun": "f1",
+    "target": "f2",
+    "impact": "f3",
+    "impact2": "f4",
+    "toggle_ui": "f12"
+  }
+}

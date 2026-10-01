@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FireMind · AI 产品作品集</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --text: #1a1a1a;
+      --muted: #5c6570;
+      --accent: #b8860b;
+      --border: #e5e7eb;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid #d4a84b;
+      padding: 4px 10px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+    .subtitle { color: var(--muted); font-size: 1.05rem; margin-bottom: 28px; }
+    .cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 40px;
+    }
+    .cta a {
+      display: inline-block;
+      padding: 10px 18px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .cta .primary {
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .cta .secondary {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    ul { margin-left: 1.2em; }
+    li { margin-bottom: 6px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+    }
+    th { background: #f3f4f6; font-weight: 600; }
+    .arch {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px;
+      background: #f3f4f6;
+      padding: 14px;
+      border-radius: 8px;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.45;
+    }
+    footer {
+      margin-top: 32px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="tag">AI 产品 · 0→1 MVP</span>
+    <h1>FireMind</h1>
+    <p class="subtitle">WARDOGS 炮兵首装填助手 — 从自用工具到开源帮助新手</p>
+
+    <div class="cta">
+      <a class="primary" href="/">在线体验 Demo</a>
+      <a class="secondary" href="https://github.com/" id="githubLink">GitHub（部署后替换链接）</a>
+    </div>
+
+    <section>
+      <h2>项目起源（面试可照此说）</h2>
+      <p>
+        起初是<strong>给自己做的弹道辅助</strong>：玩游戏时用地图坐标算迫击炮和 SPH 的
+        RNG/MIL，少浪费首发弹药。用着用着发现身边新手和散排队友<strong>不会从坐标变成炮镜读数</strong>，
+        于是把工具整理成 Web 形态，<strong>计划开源</strong>，方便大家复制坐标就能完成<strong>第一发装填</strong>。
+      </p>
+      <p style="margin-top:10px;color:var(--muted);font-size:14px">
+        非官方项目，与 BULKHEAD / WARDOGS 无关；尊重并参考社区已有计算器与射表贡献者。
+      </p>
+    </section>
+
+    <section>
+      <h2>背景与痛点</h2>
+      <p>
+        间接火力依赖坐标、方位角、左刻度 RNG 与右刻度 MIL（成对设置）。熟练玩家可用地图计算器；
+        新手常<strong>只调距离不调 MIL、或首发瞎打</strong>。FireMind 专注
+        <strong>「第一发怎么设」</strong>，试射后的微调交给游戏内肉眼观察（更符合真实习惯）。
+      </p>
+    </section>
+
+    <section>
+      <h2>产品定位</h2>
+      <p>
+        粘贴或填写<strong>炮位 / 目标坐标</strong> → 输出方位角、RNG+MIL 成对读数、队频口令与副官说明（规则引擎，LLM 可选）。
+        轻量、无需战术地图点选，适合单屏或手机边玩边看。
+      </p>
+    </section>
+
+    <section>
+      <h2>原理与数据来源</h2>
+      <ul>
+        <li><strong>几何</strong>：社区标定 1 坐标单位 = 100m 水平距；方位角 atan2(ΔX,ΔY)，0° 北。</li>
+        <li><strong>射表</strong>：L81 / SPH-2 的「距离–MIL」为 Beta 期间<strong>社区实测曲线</strong>，引擎内线性插值；非官方解包、非封闭弹道公式。</li>
+        <li><strong>RNG</strong>：平地上左刻度瞄距 ≈ 地图水平距离，与 MIL 成对使用（两数不必相等）。</li>
+        <li><strong>地图</strong>：MVP <strong>未嵌入</strong>游戏贴图/实时地形；V2 可接社区 Terrain3D 思路。</li>
+        <li><strong>AI</strong>：仅生成操作说明；<strong>不算</strong>弹道，避免 LLM 幻觉。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>为什么需要 AI（与规则引擎分工）</h2>
+      <ul>
+        <li><strong>规则引擎</strong>：弹道射表、插值、方位/距离 — 必须确定、可验证，不适合交给 LLM 幻觉。</li>
+        <li><strong>LLM 层（可选）</strong>：模糊指令理解、多轮补全坐标、生成口语化回复。</li>
+      </ul>
+      <div class="arch">坐标表单 → [规则弹道引擎] → RNG/MIL + 方位角 + 口令
+                ↓
+         [可选 LLM] 副官操作说明（不参与数值）</div>
+    </section>
+
+    <section>
+      <h2>竞品差异</h2>
+      <table>
+        <tr><th></th><th>社区地图计算器</th><th>FireMind</th></tr>
+        <tr><td>交互</td><td>地图点选</td><td>坐标表单 + 粘贴</td></tr>
+        <tr><td>场景</td><td>全功能火控</td><td>首装填 / 自用轻量</td></tr>
+        <tr><td>试射后</td><td>地图修正工具</td><td>依赖游戏内肉眼微调</td></tr>
+        <tr><td>说明层</td><td>无</td><td>可选 LLM 副官文案</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>MVP 范围与指标（可面试展开）</h2>
+      <ul>
+        <li><strong>范围</strong>：L81 + SPH-2；RNG/MIL 成对输出；开源 Web 部署。</li>
+        <li><strong>北极星</strong>：拿到坐标 → 正确设炮（首装填）的完成率。</li>
+        <li><strong>开源动机</strong>：降低新手使用迫击炮 / 攀枝花的门槛，与社区共建射表校验。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>我的角色（简历可写）</h2>
+      <ul>
+        <li>独立完成需求定义、竞品分析、AI/规则分层方案与 MVP 闭环。</li>
+        <li>设计表单 → 诸元 → 副官说明流程；规则/LLM 分层与无 Key 降级。</li>
+        <li>落地可部署 Web 服务，支持公网 Demo 与开源协作。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>演示建议（给面试官 2 分钟）</h2>
+      <ol style="margin-left:1.2em">
+        <li>打开 Demo → 粘贴炮位/目标坐标 → 展示 RNG+MIL 与口令。</li>
+        <li>说明数据来源（社区射表）与「首装填」边界（不替代肉眼微调）。</li>
+        <li>说明开源初衷：自用工具扩展为帮助新手。</li>
+      </ol>
+    </section>
+
+    <footer>
+      非官方社区学习项目 · 射表为社区维护数据 · 部署后请将页内 GitHub 链接改为你的仓库地址
+    </footer>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const gh = params.get('github');
+    if (gh) document.getElementById('githubLink').href = gh;
+  </script>
+</body>
+</html>

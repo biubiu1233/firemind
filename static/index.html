@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FireMind · WARDOGS 智能炮兵副官</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">FM</div>
+        <div>
+          <h1>FireMind</h1>
+          <p>WARDOGS 智能炮兵副官</p>
+        </div>
+      </div>
+      <div class="status" id="statusBadge">规则引擎</div>
+      <div class="examples">
+        <p class="label">填入示例</p>
+        <button type="button" class="chip" id="exampleMortar">L81 迫击炮</button>
+        <button type="button" class="chip" id="exampleSph">SPH-2 攀枝花</button>
+      </div>
+      <div class="about">
+        <p>粘贴坐标或 <strong>AI 识图</strong> 填炮位/目标；PC 群友可用 Windows 小助手 <kbd>F1</kbd><kbd>F2</kbd><kbd>F3</kbd>。</p>
+        <p class="muted" style="margin-top:8px">试射支持 <strong>单发落点</strong> 与 <strong>两发合并</strong> 修正。</p>
+        <p style="margin-top:10px"><a href="/portfolio.html" style="color:var(--accent);font-size:0.82rem">→ 产品作品集</a></p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="form-panel">
+        <div class="panel-head">
+          <h2>射击参数</h2>
+          <span class="hint">右键地图 → 标记坐标 → 粘贴到输入框</span>
+        </div>
+
+        <div class="ocr-panel" id="ocrPanel">
+          <div class="ocr-head">
+            <h3>AI 识图填坐标</h3>
+            <span class="ocr-badge" id="ocrBadge">检测中…</span>
+          </div>
+          <p class="ocr-intro">上传或粘贴<strong>地图截图</strong>（含十字准星与 x/y 白字）。识图会自动找十字旁坐标；手机/网页用此功能，PC 推荐小助手快捷键。</p>
+          <input type="file" id="ocrFile" accept="image/*" class="ocr-file" />
+          <div class="ocr-preview-wrap hidden" id="ocrPreviewWrap">
+            <img id="ocrPreview" alt="预览" class="ocr-preview" />
+          </div>
+          <div class="ocr-actions">
+            <button type="button" class="btn-secondary" id="ocrGunBtn">识图 → 炮位</button>
+            <button type="button" class="btn-secondary" id="ocrTargetBtn">识图 → 目标</button>
+            <button type="button" class="btn-secondary" id="ocrImpactBtn">识图 → 落点</button>
+          </div>
+          <p class="field-hint" id="ocrStatus">未选择图片</p>
+        </div>
+
+        <form id="missionForm" class="mission-form">
+          <div class="field">
+            <label>武器</label>
+            <div class="weapon-tabs">
+              <label class="tab"><input type="radio" name="weapon" value="mortar" checked /> L81 迫击炮</label>
+              <label class="tab"><input type="radio" name="weapon" value="spg" /> SPH-2 攀枝花</label>
+            </div>
+          </div>
+
+          <div class="field sph-only hidden" id="arcField">
+            <label for="arc">SPH 弹道</label>
+            <select id="arc" name="arc">
+              <option value="auto" selected>自动（~1750m 内首发高弹道）</option>
+              <option value="low">低弹道</option>
+              <option value="high">高弹道</option>
+            </select>
+            <p class="field-hint sph-only hidden" id="arcHint">
+              低弹道右 MIL 约 20–600；高弹道约 610–1390。近 ~1283 m 内通常只能高弹道。
+            </p>
+          </div>
+
+          <div class="coord-block">
+            <h3>炮位 / 火炮坐标</h3>
+            <textarea id="gunPaste" rows="2" placeholder="粘贴：x98.43, y110.38 或 98.43, 110.38"></textarea>
+            <div class="row2">
+              <div class="field-inline">
+                <label for="gunX">X</label>
+                <input id="gunX" name="gun_x" type="number" step="0.01" required placeholder="98.43" />
+              </div>
+              <div class="field-inline">
+                <label for="gunY">Y</label>
+                <input id="gunY" name="gun_y" type="number" step="0.01" required placeholder="110.38" />
+              </div>
+            </div>
+          </div>
+
+          <div class="coord-block">
+            <h3>目标坐标</h3>
+            <textarea id="targetPaste" rows="2" placeholder="粘贴目标坐标"></textarea>
+            <div class="row2">
+              <div class="field-inline">
+                <label for="targetX">X</label>
+                <input id="targetX" name="target_x" type="number" step="0.01" required placeholder="94.53" />
+              </div>
+              <div class="field-inline">
+                <label for="targetY">Y</label>
+                <input id="targetY" name="target_y" type="number" step="0.01" required placeholder="109.03" />
+              </div>
+            </div>
+          </div>
+
+          <details class="optional" id="altDetails">
+            <summary>海拔（可选）</summary>
+            <p class="field-hint" style="margin:8px 0 0">
+              仅填炮位 ASL 即可；目标 ASL 可由试射修正「一键填入粗估」后二次计算（仅更新高度提示，RNG/MIL 仍按平地射表）。
+            </p>
+            <div class="row2" style="margin-top:10px">
+              <div class="field-inline">
+                <label for="gunAlt">炮位 ASL (m)</label>
+                <input id="gunAlt" type="number" step="0.1" placeholder="留空" />
+              </div>
+              <div class="field-inline">
+                <label for="targetAlt">目标 ASL (m)</label>
+                <input id="targetAlt" type="number" step="0.1" placeholder="留空" />
+              </div>
+            </div>
+          </details>
+
+          <button type="submit" class="btn-primary">计算射击诸元</button>
+        </form>
+
+        <div class="brief-panel">
+          <div class="brief-head">
+            <h2>副官说明</h2>
+            <span class="brief-engine" id="briefEngine"></span>
+          </div>
+          <div class="brief-body" id="briefBody">
+            填写坐标后将自动生成操作步骤与口令说明。
+          </div>
+        </div>
+
+        <form class="correct-form" id="correctForm">
+          <label>试射修正（可选）</label>
+          <div class="field correction-mode">
+            <label class="tab"><input type="radio" name="corrMode" value="single" checked /> 单发落点修正</label>
+            <label class="tab"><input type="radio" name="corrMode" value="dual" /> 两发登记合并</label>
+          </div>
+          <p class="correct-help" id="corrHelpSingle">
+            对落点标记后粘贴坐标，或上方「识图 → 落点」。会给出 RNG/MIL 修正建议。
+          </p>
+          <p class="correct-help hidden" id="corrHelpDual">
+            第一发落点 + 转检查点（建议 ≥30°）第二发落点，合并两次偏差。可先识图填两发坐标。
+          </p>
+          <div class="coord-block compact" id="singleImpactBlock">
+            <h3>落点坐标（单发）</h3>
+            <textarea id="impactPaste" rows="2" placeholder="粘贴落点 x / y"></textarea>
+            <div class="row2">
+              <div class="field-inline">
+                <label for="impactX">X</label>
+                <input id="impactX" type="number" step="0.01" placeholder="落点 X" />
+              </div>
+              <div class="field-inline">
+                <label for="impactY">Y</label>
+                <input id="impactY" type="number" step="0.01" placeholder="落点 Y" />
+              </div>
+            </div>
+            <button type="submit" class="btn-secondary" style="margin-top:10px">单发落点修正</button>
+          </div>
+          <div class="coord-block compact hidden" id="dualImpactBlock">
+            <h3>第一发落点</h3>
+            <div class="row2">
+              <div class="field-inline">
+                <label for="impact1X">X</label>
+                <input id="impact1X" type="number" step="0.01" />
+              </div>
+              <div class="field-inline">
+                <label for="impact1Y">Y</label>
+                <input id="impact1Y" type="number" step="0.01" />
+              </div>
+            </div>
+            <h3 style="margin-top:12px">第二发落点（检查点）</h3>
+            <div class="row2">
+              <div class="field-inline">
+                <label for="impact2X">X</label>
+                <input id="impact2X" type="number" step="0.01" />
+              </div>
+              <div class="field-inline">
+                <label for="impact2Y">Y</label>
+                <input id="impact2Y" type="number" step="0.01" />
+              </div>
+            </div>
+            <button type="button" class="btn-secondary" id="dualCorrectBtn" style="margin-top:10px">两发合并修正</button>
+          </div>
+          <details class="optional" style="margin-top:12px">
+            <summary>或用手工描述偏差</summary>
+            <p class="correct-help" style="margin:8px 0 0">
+              偏短＝打近；偏长＝打远；偏左/偏右相对目标。
+            </p>
+            <div class="correct-row">
+              <input id="missInput" type="text" placeholder="偏右 20 米，偏短 30 米" />
+              <button type="button" class="btn-secondary" id="missTextBtn">文字修正</button>
+            </div>
+          </details>
+        </form>
+      </section>
+
+      <section class="solution-panel">
+        <h2>射击诸元</h2>
+        <div class="empty" id="emptySolution">填写坐标后自动显示</div>
+        <div class="solution-body hidden" id="solutionBody"></div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
