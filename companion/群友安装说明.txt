@@ -1,5 +1,9 @@
 FireMind 小助手（Windows）
 
+【作者打包】在 companion 目录双击 build_release.bat，成功时 release 里应有
+FireMindCompanion.exe + config.json + 本说明。若只有 config.json，说明 exe 没打成，
+看 build_release 黑窗口里的报错（需 Python 3.10+）。
+
 1. 解压，右键管理员运行 FireMindCompanion.exe
 2. 选「单发 F3」或「两发 F3+F4」；ASL 可选填
 3. F1 炮位 → F2 目标（看距离/方位/RNG/MIL）→ 试射后 F3 或两发流程

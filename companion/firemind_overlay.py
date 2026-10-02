@@ -47,6 +47,8 @@ def load_config() -> dict:
     data.setdefault("correction_mode", "single")
     data.setdefault("dual_offset_deg", 90)
     data.setdefault("ocr_source", "map")
+    data.setdefault("ocr_nudge_x", 0.0)
+    data.setdefault("ocr_nudge_y", 0.0)
     data["hotkeys"] = {**DEFAULT_HOTKEYS, **(data.get("hotkeys") or {})}
     return data
 
@@ -205,9 +207,22 @@ def _grab_hide() -> str:
 def _last_xy_from_text(text: str) -> dict | None:
     if not text:
         return None
+    num = r"([0-9]+(?:\.[0-9]+)?)"
+    xs = [(m.start(), float(m.group(1))) for m in re.finditer(rf"x\s*{num}", text, re.I)]
+    ys = [(m.start(), float(m.group(1))) for m in re.finditer(rf"y\s*{num}", text, re.I)]
+    if xs and ys:
+        x_pos, xv = xs[-1]
+        yv = ys[-1][1]
+        best = 10**9
+        for y_pos, y_val in ys:
+            d = abs(y_pos - x_pos)
+            if d < best:
+                best, yv = d, y_val
+        if 0 <= xv <= 164 and 0 <= yv <= 164:
+            return {"x": xv, "y": yv}
     matches = list(
         re.finditer(
-            r"x\s*([0-9]+(?:\.[0-9]+)?)\s*,?\s*y\s*([0-9]+(?:\.[0-9]+)?)",
+            rf"x\s*{num}\s*,?\s*y\s*{num}",
             text,
             re.I,
         )
@@ -221,17 +236,27 @@ def _last_xy_from_text(text: str) -> dict | None:
     return {"x": x, "y": y}
 
 
+def _apply_ocr_nudge(p: dict) -> dict:
+    """补偿识图常把点读在十字右下方：默认 0，可在 config 微调（单位=地图坐标）。"""
+    nx = float(CFG.get("ocr_nudge_x") or 0)
+    ny = float(CFG.get("ocr_nudge_y") or 0)
+    if not nx and not ny:
+        return p
+    x, y = float(p["x"]), float(p["y"])
+    return {"x": round(x + nx, 4), "y": round(y + ny, 4)}
+
+
 def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
     err = str(d.get("error") or "")
     p = d.get(role)
     if isinstance(p, dict) and p.get("x") is not None:
-        return p, ""
+        return _apply_ocr_nudge(p), ""
     for p in d.get("points") or []:
         if isinstance(p, dict) and p.get("x") is not None:
-            return p, ""
+            return _apply_ocr_nudge(p), ""
     parsed = _last_xy_from_text(d.get("ocr_text") or "")
     if parsed:
-        return parsed, ""
+        return _apply_ocr_nudge(parsed), ""
     if API_URL and len(d.get("ocr_text") or "") > 3:
         try:
             r = requests.post(
@@ -242,7 +267,7 @@ def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
             if r.ok:
                 pick = r.json().get("pick")
                 if pick and pick.get("x") is not None:
-                    return pick, ""
+                    return _apply_ocr_nudge(pick), ""
         except requests.RequestException:
             pass
     if err and not d.get("ocr_text"):
@@ -282,7 +307,12 @@ def api_calc() -> dict:
         "target_x": state["target"]["x"],
         "target_y": state["target"]["y"],
         "weapon_id": CFG.get("weapon", "spg"),
-        "layer_asl": False,
+        "layer_asl": bool(
+            gun_alt_var
+            and target_alt_var
+            and gun_alt_var.get().strip()
+            and target_alt_var.get().strip()
+        ),
         "layer_hull": False,
         "baseline_pitch": False,
     }
@@ -307,8 +337,9 @@ def _tip_text() -> str:
             " F12藏窗后仍会弹提示。"
         )
     return (
-        "F1炮位 · F2目标 · F3单发落点 · F12藏窗 · 十字对准地图白字再按键。"
-        " 未填ASL时SPH默认建议高支过障。"
+        "F1炮 · F2目 · F3落点 · F12藏窗 · 十字对准交点。"
+        " 坐标若已核对无误，首发仍偏右下多为：炮口方位/RNG·MIL未拧到位、"
+        "或低/高支与 overlay 不一致；F3 按落点相对修正通常更贴实测。"
     )
 
 
