@@ -296,6 +296,8 @@ class BallisticsEngine:
         high: MilSolution | None,
         distance_m: float,
         meta: dict[str, Any],
+        gun_alt: float | None = None,
+        target_alt: float | None = None,
     ) -> tuple[str | None, list[str]]:
         """SPH 口令/主读数必须与真实可用弹道一致，避免「建议低弹道 + 高 MIL」。"""
         low_ok = low is not None
@@ -326,8 +328,21 @@ class BallisticsEngine:
                 return "low", extra
             return None, extra
 
-        # 自动：低于低弹道实用射程 → 高弹道；否则优先低弹道（RNG 与右 MIL 20–600 成对）
+        terrain_known = gun_alt is not None and target_alt is not None
+
+        # 自动：近距只能高支；地形未知优先高支过障；填了 ASL 再建议低支省弹
         if high_ok and (not low_ok or distance_m + 0.5 < practical_min):
+            return "high", extra
+        if (
+            low_ok
+            and high_ok
+            and distance_m + 0.5 >= practical_min
+            and not terrain_known
+        ):
+            extra.append(
+                "自动：未填炮/目标 ASL，默认建议高支（低支易撞山）。"
+                "确认平地且无遮挡可设 config \"arc\": \"low\"；填 ASL 后 auto 可推低支。"
+            )
             return "high", extra
         if low_ok and distance_m + 0.5 >= practical_min:
             extra.append(
@@ -409,7 +424,7 @@ class BallisticsEngine:
         effective_arc: str | None = None
         if weapon_id == "spg":
             effective_arc, arc_warnings = self._resolve_sph_effective_arc(
-                preferred_arc, low, high, distance_m, meta
+                preferred_arc, low, high, distance_m, meta, gun_alt, target_alt
             )
             warnings.extend(arc_warnings)
             if effective_arc == "low" and low_hud_bump >= 0.5:

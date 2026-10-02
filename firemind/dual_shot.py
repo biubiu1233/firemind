@@ -13,6 +13,7 @@ from .correction import (
     _compute_solution_to_point,
     _current_mil,
     _lateral_azimuth_consistent,
+    _sph_correction_pairs,
     compute_miss_from_coords,
     suggest_correction_from_miss,
 )
@@ -99,6 +100,14 @@ def merge_dual_impact_correction(
         f"合并瞄准 x{aim.x:.2f} y{aim.y:.2f}",
     ]
     mil_delta = (new_mil - old_mil) if old_mil is not None and new_mil is not None else None
+    # 双发合并用虚拟落点（与合并瞄准对称）以便双支重算
+    virt_impact = Point(
+        2 * solution.target.x - aim.x,
+        2 * solution.target.y - aim.y,
+    )
+    corr_pairs = _sph_correction_pairs(
+        solution, miss, engine, use_arc, new_az, virt_impact
+    )
     corr = CorrectionResult(
         lateral_m=miss.lateral_m,
         range_m=miss.range_m,
@@ -110,5 +119,6 @@ def merge_dual_impact_correction(
         explanation="两发合并（射表重算）",
         steps=steps,
         miss_analysis=miss,
+        correction_pairs=corr_pairs,
     )
     return corr, cp_info

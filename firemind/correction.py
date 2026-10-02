@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .ballistics import METERS_PER_UNIT, BallisticsEngine, FiringSolution, Point
@@ -45,6 +45,7 @@ class CorrectionResult:
     steps: list[str]
     miss_analysis: MissAnalysis | None = None
     altitude_hint: dict[str, Any] | None = None
+    correction_pairs: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -57,6 +58,7 @@ class CorrectionResult:
             "arc": self.arc,
             "explanation": self.explanation,
             "steps": self.steps,
+            "correction_pairs": self.correction_pairs,
         }
         if self.miss_analysis:
             out["miss_analysis"] = self.miss_analysis.to_dict()
@@ -368,6 +370,98 @@ def _lateral_azimuth_consistent(lateral_m: float, old_az: float, new_az: float) 
     return delta * (-lateral_m) >= 0 or abs(delta) < 0.05
 
 
+def _dial_pair_for_arc(solution: FiringSolution, arc: str) -> tuple[int | None, int | None]:
+    for p in solution.dial_pairs or []:
+        if p.get("arc") == arc and p.get("sight_rng_m") is not None:
+            return int(p["sight_rng_m"]), int(p["mil"])
+    if solution.effective_arc == arc:
+        rng = solution.sight_rng_m
+        mil = solution.mil_dial
+        if rng is not None and mil is not None:
+            return int(rng), int(mil)
+    return None, None
+
+
+def _recompute_rng_mil_for_arc(
+    solution: FiringSolution,
+    analysis: MissAnalysis,
+    engine: BallisticsEngine,
+    use_arc: str,
+    base_az: float | None,
+    impact: Point | None,
+) -> tuple[float | None, int | None, float | None]:
+    """按同一落点偏差，在指定弹道支上重算 RNG/MIL（SPH 双支展示用）。"""
+    new_az = base_az if base_az is not None else solution.azimuth_deg
+    rng0, mil0 = _dial_pair_for_arc(solution, use_arc)
+    if rng0 is None:
+        rng0 = solution.sight_rng_m or int(round(solution.distance_m))
+    if mil0 is None:
+        cm = _current_mil(solution, use_arc)
+        mil0 = int(round(cm)) if cm is not None else None
+
+    lat_only = abs(analysis.lateral_m) >= 1 and abs(analysis.range_m) < 10
+    range_only = abs(analysis.range_m) >= 1 and abs(analysis.lateral_m) < 10
+    combined = abs(analysis.lateral_m) >= 1 and abs(analysis.range_m) >= 1
+
+    if lat_only:
+        return new_az, rng0, float(mil0) if mil0 is not None else None
+
+    if range_only:
+        aim_pt = _point_at_az_range_m(
+            solution.origin,
+            new_az,
+            solution.distance_m + analysis.range_m,
+        )
+        rs = _compute_solution_to_point(engine, solution, aim_pt, use_arc)
+        if rs and rs.sight_rng_m is not None and rs.mil_dial is not None:
+            return rs.azimuth_deg, rs.sight_rng_m, float(rs.mil_dial)
+        return new_az, rng0, float(mil0) if mil0 is not None else None
+
+    if combined and impact is not None:
+        corrected = _aim_point_from_impact(solution.target, impact)
+        rs = _compute_solution_to_point(engine, solution, corrected, use_arc)
+        if rs and rs.sight_rng_m is not None and rs.mil_dial is not None:
+            cand_az = rs.azimuth_deg
+            if _lateral_azimuth_consistent(
+                analysis.lateral_m, solution.azimuth_deg, cand_az
+            ):
+                new_az = cand_az
+            return new_az, rs.sight_rng_m, float(rs.mil_dial)
+
+    return new_az, rng0, float(mil0) if mil0 is not None else None
+
+
+def _sph_correction_pairs(
+    solution: FiringSolution,
+    analysis: MissAnalysis,
+    engine: BallisticsEngine,
+    primary_arc: str,
+    primary_az: float | None,
+    impact: Point | None,
+) -> list[dict[str, Any]]:
+    if solution.weapon_id != "spg":
+        return []
+    pairs: list[dict[str, Any]] = []
+    for arc in ("low", "high"):
+        if arc == "low" and solution.elevation_low is None:
+            continue
+        if arc == "high" and solution.elevation_high is None:
+            continue
+        az, rng, mil = _recompute_rng_mil_for_arc(
+            solution, analysis, engine, arc, primary_az, impact
+        )
+        if rng is None or mil is None:
+            continue
+        pairs.append({
+            "arc": arc,
+            "new_azimuth_deg": round(az, 1) if az is not None else None,
+            "new_rng_m": int(rng),
+            "new_mil": int(round(mil)),
+            "recommended": arc == primary_arc,
+        })
+    return pairs
+
+
 def _compute_solution_to_point(
     engine: BallisticsEngine,
     solution: FiringSolution,
@@ -414,6 +508,7 @@ def suggest_correction_from_impact(
             ),
             steps=[analysis.map_summary, analysis.line_summary, "已拒绝离谱修正"],
             miss_analysis=analysis,
+            correction_pairs=[],
         )
         return bad
     use_arc = (
@@ -486,6 +581,9 @@ def suggest_correction_from_impact(
         mil_delta = new_mil - old_mil
 
     explanation = "；".join(steps)
+    corr_pairs = _sph_correction_pairs(
+        solution, analysis, engine, use_arc, new_az, impact
+    )
     return CorrectionResult(
         lateral_m=analysis.lateral_m,
         range_m=analysis.range_m,
@@ -498,6 +596,7 @@ def suggest_correction_from_impact(
         steps=steps,
         miss_analysis=analysis,
         altitude_hint=base.altitude_hint,
+        correction_pairs=corr_pairs,
     )
 
 
