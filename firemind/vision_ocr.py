@@ -1,4 +1,4 @@
-"""截图识坐标 — 自动找地图十字准星旁的 x/y。"""
+"""截图识坐标 — 读取地图白字 x/y 标签。"""
 
 from __future__ import annotations
 
@@ -10,13 +10,18 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .coords import extract_coord_pairs
+from .coords import extract_coord_pairs, extract_map_xy_labels
 
-PROMPT_CROSSHAIR = """WARDOGS 战术地图截图。地图视图里有十字准星（+ 或瞄准十字），十字附近常有白色标签：x93.53 与 y36.54（可能在十字左右或上下）。
-你的任务：找到十字准星所指向的那一组 x、y 游戏坐标（范围约 0~163.84，可带小数）。
-不要读聊天、列表、其它标记点的坐标；只要十字准星这一点。
-只输出 JSON，不要其它文字：
-{"points":[{"x":93.53,"y":36.54,"label":"unknown"}]}
+PROMPT_CROSSHAIR = """WARDOGS 战术地图局部截图（灰度地形 + 白色网格线）。
+
+准星附近常有白色标签，格式为：字母 x 或 y 后面紧跟数字（可有小数），例如 y12.34 与 x56.78 分两行，或一行 x56.78 y12.34。y 常在 x 上方。
+规则：x 后面的数字 → JSON 的 x；y 后面的数字 → JSON 的 y（与屏幕上谁先谁后无关）。数值范围约 0~163.84，以截图里实际读数为准，勿套用任何示例数字。
+
+只读当前准星处这一组 x/y 白字；不要读聊天、弹药、其它标记。
+看不清或没有白字时：{"points":[]}
+
+只输出 JSON：
+{"points":[{"x":<x后数字>,"y":<y后数字>,"label":"unknown"}]}
 label 可选 gun|target|impact|unknown。"""
 
 PROMPT_CHAT = """WARDOGS 截图：从聊天/输入框读取地图坐标（右键标记后常见）。
@@ -64,6 +69,22 @@ def _parse_json_content(text: str) -> dict | None:
     return None
 
 
+def _point_dict(x: float, y: float, label: str = "unknown") -> dict[str, Any]:
+    return {"x": x, "y": y, "label": label}
+
+
+def _pick_from_map_text(text: str) -> dict[str, Any] | None:
+    """地图模式：从模型原文里匹配 x<number> 与 y<number>。"""
+    pt = extract_map_xy_labels(text)
+    if pt:
+        return _point_dict(pt.x, pt.y)
+    pairs = extract_coord_pairs(text)
+    if pairs:
+        p = pairs[-1][0]
+        return _point_dict(p.x, p.y)
+    return None
+
+
 def ocr_map_image(
     image_bytes: bytes,
     mime: str = "image/png",
@@ -77,7 +98,8 @@ def ocr_map_image(
     hint = {"gun": "这是炮位步骤，label=gun。", "target": "这是目标步骤，label=target。", "impact": "这是落点步骤，label=impact。"}.get(
         role or "", ""
     )
-    if capture_mode in ("chat_coords", "chat"):
+    chat_mode = capture_mode in ("chat_coords", "chat")
+    if chat_mode:
         prompt = PROMPT_CHAT + (" " + hint if hint else "")
     else:
         prompt = PROMPT_CROSSHAIR + (" " + hint if hint else "")
@@ -93,8 +115,8 @@ def ocr_map_image(
                     ],
                 }
             ],
-            "temperature": 0.05,
-            "max_tokens": 800,
+            "temperature": 0,
+            "max_tokens": 256,
         }
     ).encode()
     req = urllib.request.Request(
@@ -128,33 +150,46 @@ def ocr_map_image(
         else:
             msg = str(body)[:200]
         return {"error": f"vision API bad response: {msg}"}
+
     parsed = _parse_json_content(text)
-    points: list[dict[str, Any]] = []
+    json_points: list[dict[str, Any]] = []
     if parsed and isinstance(parsed.get("points"), list):
-        for raw in parsed["points"]:
-            if not isinstance(raw, dict):
+        for raw_pt in parsed["points"]:
+            if not isinstance(raw_pt, dict):
                 continue
             try:
-                x, y = float(raw["x"]), float(raw["y"])
+                x, y = float(raw_pt["x"]), float(raw_pt["y"])
             except (KeyError, TypeError, ValueError):
                 continue
             if not (0 <= x <= 164 and 0 <= y <= 164):
                 continue
-            points.append({"x": x, "y": y, "label": raw.get("label") or "unknown"})
-    out: dict[str, Any] = {"points": points, "ocr_text": text[:2000]}
-    chat_mode = capture_mode in ("chat_coords", "chat")
-    pairs = extract_coord_pairs(text)
-    pick = None
-    if chat_mode and pairs:
-        pt = pairs[-1][0]
-        pick = {"x": pt.x, "y": pt.y, "label": "unknown"}
-        out["points"] = [pick]
-    elif points:
-        pick = points[0]
-    elif pairs:
-        pt = pairs[-1][0] if chat_mode else pairs[0][0]
-        pick = {"x": pt.x, "y": pt.y, "label": "unknown"}
-        out["points"] = [pick]
+            json_points.append(
+                {"x": x, "y": y, "label": raw_pt.get("label") or "unknown"}
+            )
+
+    pick: dict[str, Any] | None = None
+    if chat_mode:
+        if json_points:
+            pick = json_points[-1]
+        else:
+            pairs = extract_coord_pairs(text)
+            if pairs:
+                pt = pairs[-1][0]
+                pick = _point_dict(pt.x, pt.y)
+    else:
+        label_pick = _pick_from_map_text(text)
+        if label_pick:
+            pick = label_pick
+        elif json_points:
+            pick = json_points[0]
+
+    out: dict[str, Any] = {
+        "points": [pick] if pick else [],
+        "ocr_text": text[:2000],
+        "ocr_model": model,
+    }
     if pick and role in ("gun", "target", "impact"):
         out[role] = pick
+    if not pick and not chat_mode:
+        out["parse_hint"] = "未找到 x/y 白字；请 F12 藏窗、放大地图、十字对准白字再按"
     return out

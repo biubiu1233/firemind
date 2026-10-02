@@ -25,19 +25,28 @@ def extract_coord_pairs(text: str) -> list[tuple[Point, int, str]]:
     out: list[tuple[Point, int, str]] = []
     seen: set[tuple[float, float]] = set()
 
-    patterns = [
-        re.compile(rf"📍?\s*x\s*[:=]?\s*({_NUM})\s*[,，\s]+\s*y\s*[:=]?\s*({_NUM})", re.I),
-        re.compile(rf"x\s*({_NUM})\s*,\s*y\s*({_NUM})", re.I),
-        re.compile(
-            rf"(?:炮位|目标|迫击炮|攀枝花|我方|gun|target|origin)"
-            rf"[:：\s]*({_NUM})\s*[,，]\s*({_NUM})",
-            re.I,
+    patterns: list[tuple[re.Pattern[str], bool]] = [
+        (re.compile(rf"📍?\s*x\s*[:=]?\s*({_NUM})\s*[,，\s]+\s*y\s*[:=]?\s*({_NUM})", re.I), False),
+        (re.compile(rf"x\s*({_NUM})\s*y\s*({_NUM})", re.I), False),
+        (re.compile(rf"y\s*({_NUM})\s*x\s*({_NUM})", re.I), True),
+        (re.compile(rf"x\s*({_NUM})\s*,\s*y\s*({_NUM})", re.I), False),
+        (
+            re.compile(
+                rf"(?:炮位|目标|迫击炮|攀枝花|我方|gun|target|origin)"
+                rf"[:：\s]*({_NUM})\s*[,，]\s*({_NUM})",
+                re.I,
+            ),
+            False,
         ),
     ]
 
-    for pat in patterns:
+    for pat, y_first in patterns:
         for m in pat.finditer(raw):
-            x, y = _num(m.group(1)), _num(m.group(2))
+            g1, g2 = m.group(1), m.group(2)
+            if y_first:
+                x, y = _num(g2), _num(g1)
+            else:
+                x, y = _num(g1), _num(g2)
             key = (round(x, 4), round(y, 4))
             if key in seen:
                 continue
@@ -46,6 +55,31 @@ def extract_coord_pairs(text: str) -> list[tuple[Point, int, str]]:
 
     out.sort(key=lambda t: t[1])
     return out
+
+
+def extract_map_xy_labels(text: str) -> Point | None:
+    """
+    战术地图白字：x 与 y 后各跟数字（可紧贴、可换行）；x 值→Point.x，y 值→Point.y。
+    用于 OCR 回退；取与最后一个 x 最接近的 y。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    xs = [(m.start(), _num(m.group(1))) for m in re.finditer(rf"x\s*({_NUM})", raw, re.I)]
+    ys = [(m.start(), _num(m.group(1))) for m in re.finditer(rf"y\s*({_NUM})", raw, re.I)]
+    if not xs or not ys:
+        return None
+    x_pos, xv = xs[-1]
+    yv = ys[-1][1]
+    best_dist = 10**9
+    for y_pos, y_val in ys:
+        d = abs(y_pos - x_pos)
+        if d < best_dist:
+            best_dist = d
+            yv = y_val
+    if not (0 <= xv <= 164 and 0 <= yv <= 164):
+        return None
+    return Point(xv, yv)
 
 
 def _role_before(text: str, index: int) -> str | None:
