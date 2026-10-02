@@ -1,4 +1,3 @@
-keyboard
-mss
-Pillow
-requests
+# Render / 服务端 API（勿与 companion/requirements.txt 混用）
+flask>=3.0
+gunicorn>=22.0
