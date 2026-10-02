@@ -431,7 +431,11 @@ class BallisticsEngine:
         low_table = ballistics.get("low", [])
         high_table = ballistics.get("high", [])
         if weapon_id == "spg" and low_table:
-            pair = self._table_dial_pair(low_table, distance_m)
+            # 低支：左 RNG = 地图距离；MIL 用已校准的 elevation_low（非 raw 射表插值）
+            if low:
+                pair = self._mil_solution_to_dial(low, distance_m)
+            else:
+                pair = self._table_dial_pair(low_table, distance_m)
             if pair:
                 dial_pairs.append({"arc": "low", **pair})
         elif low:
