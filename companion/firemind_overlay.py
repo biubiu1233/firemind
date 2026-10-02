@@ -45,6 +45,7 @@ def load_config() -> dict:
     data.setdefault("crop_left_px", 460)
     data.setdefault("correction_mode", "single")
     data.setdefault("dual_offset_deg", 90)
+    data.setdefault("ocr_source", "chat")
     data["hotkeys"] = {**DEFAULT_HOTKEYS, **(data.get("hotkeys") or {})}
     return data
 
@@ -109,11 +110,16 @@ def grab_b64() -> str:
         shot = sct.grab(sct.monitors[idx])
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
     w, h = img.size
-    cl = int(CFG.get("crop_left_px") or 0)
+    src = (CFG.get("ocr_source") or "map").lower()
+    cl = 0 if src in ("chat", "chat_coords") else int(CFG.get("crop_left_px") or 0)
     if cl > 0 and w > cl + 320:
         img = img.crop((cl, 0, w, h))
+        w, h = img.size
+    max_w = int(CFG.get("ocr_max_width") or 1280)
+    if w > max_w:
+        img = img.resize((max_w, max(1, int(h * max_w / w))), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=90)
+    img.save(buf, format="JPEG", quality=82)
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
 
 
@@ -155,11 +161,20 @@ def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
     return None, "未识别坐标，F12 隐藏小窗再按"
 
 
+def _ocr_capture_mode() -> str:
+    src = (CFG.get("ocr_source") or "map").lower()
+    return "chat_coords" if src in ("chat", "chat_coords") else "crosshair_map"
+
+
 def api_ocr(role: str) -> dict:
     try:
         r = requests.post(
             f"{API_URL}/api/vision/ocr",
-            json={"image_base64": f"data:image/jpeg;base64,{_grab_hide()}", "role": role, "capture_mode": "crosshair_map"},
+            json={
+                "image_base64": f"data:image/jpeg;base64,{_grab_hide()}",
+                "role": role,
+                "capture_mode": _ocr_capture_mode(),
+            },
             timeout=90,
         )
         r.raise_for_status()
@@ -195,17 +210,30 @@ def api_calc() -> dict:
 
 
 def sol_one_liner(sol: dict) -> str:
-    rng, mil, az = sol.get("sight_rng_m"), sol.get("mil_dial"), sol.get("azimuth_deg")
+    az = sol.get("azimuth_deg")
     dist = sol.get("distance_m")
+    pairs = sol.get("dial_pairs") or []
+    spg = [p for p in pairs if p.get("arc") in ("low", "high") and p.get("sight_rng_m") is not None]
     parts = []
     if dist is not None:
-        parts.append(f"距 {dist}m")
+        parts.append(f"距{dist}m")
     if az is not None:
-        parts.append(f"方位 {az}°")
-    if rng is not None and mil is not None:
-        parts.append(f"RNG {rng} · MIL {mil}")
-    elif mil is not None:
-        parts.append(f"MIL {mil}")
+        parts.append(f"方位{az}°")
+    if len(spg) >= 2:
+        chunks = []
+        for p in spg:
+            tag = "低支" if p["arc"] == "low" else "高支"
+            chunks.append(f"{tag} RNG{p['sight_rng_m']}/MIL{p['mil']}")
+        parts.append(" | ".join(chunks))
+    else:
+        rng, mil = sol.get("sight_rng_m"), sol.get("mil_dial")
+        if rng is not None and mil is not None:
+            parts.append(f"RNG {rng} · MIL {mil}")
+        elif mil is not None:
+            parts.append(f"MIL {mil}")
+    eff = sol.get("effective_arc")
+    if eff in ("low", "high") and len(spg) >= 2:
+        parts.append(f"首发用{eff}")
     return " · ".join(parts) if parts else "诸元已更新"
 
 
@@ -430,12 +458,16 @@ def build_ui(root: tk.Tk) -> None:
     tk.Entry(row2, textvariable=target_alt_var, width=6, bg="#12151a", fg="#eee", relief="flat").pack(side="left", padx=4)
     tk.Label(row2, text="(可选)", bg="#1a1d24", fg="#666", font=("Segoe UI", 8)).pack(side="left")
 
-    main_var = tk.StringVar(value="F1炮位 F2目标 F3/F4落点")
-    sub_var = tk.StringVar(value=API_URL[:48])
-    tk.Label(frm, textvariable=main_var, bg="#1a1d24", fg="#fff", font=("Consolas", 12, "bold"), wraplength=400, justify="left").pack(
-        anchor="w", pady=(10, 2)
+    main_var = tk.StringVar(value="F1炮 F2目 F3/F4落点")
+    sub_var = tk.StringVar(value="就绪")
+    tip = "F1炮F2目F3落·F12藏窗·📍聊天坐标·SPH同距两套:低支MIL小/高支MIL大"
+    tk.Label(frm, text=tip, bg="#1a1d24", fg="#7a828a", font=("Segoe UI", 7), wraplength=400, justify="left").pack(
+        anchor="w", pady=(4, 0)
     )
-    tk.Label(frm, textvariable=sub_var, bg="#1a1d24", fg="#9aa0a6", font=("Segoe UI", 9), wraplength=400, justify="left").pack(anchor="w")
+    tk.Label(frm, textvariable=main_var, bg="#1a1d24", fg="#fff", font=("Consolas", 11, "bold"), wraplength=400, justify="left").pack(
+        anchor="w", pady=(4, 1)
+    )
+    tk.Label(frm, textvariable=sub_var, bg="#1a1d24", fg="#9aa0a6", font=("Segoe UI", 8), wraplength=400, justify="left").pack(anchor="w")
 
 
 def main() -> None:
