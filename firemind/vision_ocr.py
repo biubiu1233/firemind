@@ -19,6 +19,12 @@ PROMPT_CROSSHAIR = """WARDOGS 战术地图截图。地图视图里有十字准�
 {"points":[{"x":93.53,"y":36.54,"label":"unknown"}]}
 label 可选 gun|target|impact|unknown。"""
 
+PROMPT_CHAT = """WARDOGS 截图：从聊天/输入框读取地图坐标（右键标记后常见）。
+格式如 x95.82, y62.85 或 📍 x95.80, y62.86（0~163.84，可小数）。
+只取聊天里最新完整一组 x,y，不要读地图十字、不要读其它 UI 数字。
+只输出 JSON：{"points":[{"x":95.82,"y":62.85,"label":"unknown"}]}
+label 可选 gun|target|impact|unknown。"""
+
 
 def ocr_available() -> bool:
     return bool(
@@ -71,7 +77,10 @@ def ocr_map_image(
     hint = {"gun": "这是炮位步骤，label=gun。", "target": "这是目标步骤，label=target。", "impact": "这是落点步骤，label=impact。"}.get(
         role or "", ""
     )
-    prompt = PROMPT_CROSSHAIR + (" " + hint if hint else "")
+    if capture_mode in ("chat_coords", "chat"):
+        prompt = PROMPT_CHAT + (" " + hint if hint else "")
+    else:
+        prompt = PROMPT_CROSSHAIR + (" " + hint if hint else "")
     payload = json.dumps(
         {
             "model": model,
@@ -95,10 +104,30 @@ def ocr_map_image(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            text = json.loads(resp.read())["choices"][0]["message"]["content"]
-    except (urllib.error.URLError, KeyError, json.JSONDecodeError, TimeoutError):
-        return {"error": "vision API failed"}
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:200]
+        return {"error": f"vision API HTTP {e.code}: {detail}"}
+    except TimeoutError:
+        return {"error": "vision API 超时（截图过大或网络慢，请 F12 隐藏小窗后再试）"}
+    except OSError as e:
+        return {"error": f"vision API 连接中断: {e}"}
+    except urllib.error.URLError as e:
+        return {"error": f"vision API failed: {e}"}
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return {"error": f"vision API 返回非 JSON: {e}"}
+    try:
+        text = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        err = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("code") or str(err)
+        else:
+            msg = str(body)[:200]
+        return {"error": f"vision API bad response: {msg}"}
     parsed = _parse_json_content(text)
     points: list[dict[str, Any]] = []
     if parsed and isinstance(parsed.get("points"), list):
