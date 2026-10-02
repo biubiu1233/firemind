@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -110,11 +111,26 @@ def grab_b64() -> str:
         shot = sct.grab(sct.monitors[idx])
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
     w, h = img.size
-    src = (CFG.get("ocr_source") or "map").lower()
-    cl = 0 if src in ("chat", "chat_coords") else int(CFG.get("crop_left_px") or 0)
-    if cl > 0 and w > cl + 320:
-        img = img.crop((cl, 0, w, h))
+    src = (CFG.get("ocr_source") or "chat").lower()
+    if src in ("chat", "chat_coords"):
+        lf = float(CFG.get("chat_left_frac", 0))
+        wf = float(CFG.get("chat_width_frac", 0.5))
+        tf = float(CFG.get("chat_top_frac", 0.48))
+        hf = float(CFG.get("chat_height_frac", 0.52))
+        img = img.crop(
+            (
+                max(0, int(w * lf)),
+                max(0, int(h * tf)),
+                min(w, int(w * (lf + wf))),
+                min(h, int(h * (tf + hf))),
+            )
+        )
         w, h = img.size
+    else:
+        cl = int(CFG.get("crop_left_px") or 0)
+        if cl > 0 and w > cl + 320:
+            img = img.crop((cl, 0, w, h))
+            w, h = img.size
     max_w = int(CFG.get("ocr_max_width") or 1280)
     if w > max_w:
         img = img.resize((max_w, max(1, int(h * max_w / w))), Image.Resampling.LANCZOS)
@@ -149,6 +165,25 @@ def _grab_hide() -> str:
             overlay.after(0, show)
 
 
+def _last_xy_from_text(text: str) -> dict | None:
+    if not text:
+        return None
+    matches = list(
+        re.finditer(
+            r"x\s*([0-9]+(?:\.[0-9]+)?)\s*,?\s*y\s*([0-9]+(?:\.[0-9]+)?)",
+            text,
+            re.I,
+        )
+    )
+    if not matches:
+        return None
+    m = matches[-1]
+    x, y = float(m.group(1)), float(m.group(2))
+    if not (0 <= x <= 164 and 0 <= y <= 164):
+        return None
+    return {"x": x, "y": y}
+
+
 def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
     if d.get("error"):
         return None, str(d["error"])[:100]
@@ -158,11 +193,27 @@ def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
     for p in d.get("points") or []:
         if isinstance(p, dict) and p.get("x") is not None:
             return p, ""
-    return None, "未识别坐标，F12 隐藏小窗再按"
+    parsed = _last_xy_from_text(d.get("ocr_text") or "")
+    if parsed:
+        return parsed, ""
+    if API_URL and len(d.get("ocr_text") or "") > 3:
+        try:
+            r = requests.post(
+                f"{API_URL}/api/parse-coords",
+                json={"text": d["ocr_text"]},
+                timeout=15,
+            )
+            if r.ok:
+                pick = r.json().get("pick")
+                if pick and pick.get("x") is not None:
+                    return pick, ""
+        except requests.RequestException:
+            pass
+    return None, "未识别坐标：F12藏窗，对准聊天框📍行再按"
 
 
 def _ocr_capture_mode() -> str:
-    src = (CFG.get("ocr_source") or "map").lower()
+    src = (CFG.get("ocr_source") or "chat").lower()
     return "chat_coords" if src in ("chat", "chat_coords") else "crosshair_map"
 
 
@@ -460,7 +511,7 @@ def build_ui(root: tk.Tk) -> None:
 
     main_var = tk.StringVar(value="F1炮 F2目 F3/F4落点")
     sub_var = tk.StringVar(value="就绪")
-    tip = "F1炮F2目F3落·F12藏窗·📍聊天坐标·SPH同距两套:低支MIL小/高支MIL大"
+    tip = "F1炮F2目F3落·F12藏窗·只截左下聊天📍x,y·勿露大地图十字"
     tk.Label(frm, text=tip, bg="#1a1d24", fg="#7a828a", font=("Segoe UI", 7), wraplength=400, justify="left").pack(
         anchor="w", pady=(4, 0)
     )

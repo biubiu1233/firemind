@@ -19,5 +19,6 @@
   "layer_hull": true,
   "baseline_pitch": true,
   "layer_asl": true,
-  "hull_heading_deg": ""
+  "hull_heading_deg": "",
+  "ocr_source": "chat"
 }
