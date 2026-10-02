@@ -1,0 +1,22 @@
+{
+  "api_url": "https://firemind-pvgm.onrender.com",
+  "weapon": "spg",
+  "arc": "auto",
+  "ocr_source": "chat",
+  "monitor": 1,
+  "chat_left_frac": 0,
+  "chat_width_frac": 0.5,
+  "chat_top_frac": 0.48,
+  "chat_height_frac": 0.52,
+  "crop_left_px": 460,
+  "ocr_max_width": 1280,
+  "correction_mode": "single",
+  "dual_offset_deg": 90,
+  "hotkeys": {
+    "gun": "f1",
+    "target": "f2",
+    "impact": "f3",
+    "impact2": "f4",
+    "toggle_ui": "f12"
+  }
+}
