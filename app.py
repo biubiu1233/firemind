@@ -105,6 +105,20 @@ def correct():
     return jsonify(corr.to_dict())
 
 
+@app.post("/api/parse-coords")
+def parse_coords():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or data.get("message") or "").strip()
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    from firemind.coords import extract_coord_pairs
+
+    pairs = extract_coord_pairs(text)
+    points = [{"x": p.x, "y": p.y} for p, _, _ in pairs]
+    pick = points[-1] if points else None
+    return jsonify({"points": points, "pick": pick})
+
+
 @app.post("/api/vision/ocr")
 def vision_ocr():
     data = request.get_json(silent=True) or {}
@@ -116,7 +130,10 @@ def vision_ocr():
     if err:
         return jsonify({"error": err}), 400
     role = (data.get("role") or "").strip() or None
-    result = ocr_map_image(image_bytes, mime, role, data.get("capture_mode"))
+    try:
+        result = ocr_map_image(image_bytes, mime, role, data.get("capture_mode"))
+    except Exception as e:
+        return jsonify({"error": f"ocr_internal: {e}"}), 500
     result["ocr_remaining_hour"] = remaining
     return jsonify(result)
 
