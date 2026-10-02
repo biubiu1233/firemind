@@ -46,7 +46,7 @@ def load_config() -> dict:
     data.setdefault("crop_left_px", 460)
     data.setdefault("correction_mode", "single")
     data.setdefault("dual_offset_deg", 90)
-    data.setdefault("ocr_source", "chat")
+    data.setdefault("ocr_source", "map")
     data["hotkeys"] = {**DEFAULT_HOTKEYS, **(data.get("hotkeys") or {})}
     return data
 
@@ -69,6 +69,7 @@ sub_var: tk.StringVar | None = None
 corr_mode_var: tk.StringVar | None = None
 gun_alt_var: tk.StringVar | None = None
 target_alt_var: tk.StringVar | None = None
+tip_label: tk.Label | None = None
 
 
 def ui_call(fn) -> None:
@@ -76,14 +77,43 @@ def ui_call(fn) -> None:
         overlay.after(0, fn)
 
 
-def set_lines(main: str, sub: str = "") -> None:
+def set_lines(main: str, sub: str = "", toast: bool = True) -> None:
     def go() -> None:
         if main_var:
             main_var.set(main)
         if sub_var:
             sub_var.set(sub)
+        if toast and not ui_visible:
+            show_toast(main, sub)
 
     ui_call(go)
+
+
+def show_toast(title: str, body: str = "") -> None:
+    if not overlay:
+        return
+
+    tw = tk.Toplevel(overlay)
+    tw.overrideredirect(True)
+    tw.attributes("-topmost", True)
+    tw.configure(bg="#2a3140", highlightbackground="#4a5568", highlightthickness=1)
+    pad = tk.Frame(tw, bg="#2a3140", padx=12, pady=10)
+    pad.pack()
+    tk.Label(
+        pad, text=title[:80], bg="#2a3140", fg="#ffffff",
+        font=("Microsoft YaHei UI", 10, "bold"), wraplength=320, justify="left",
+    ).pack(anchor="w")
+    if body:
+        tk.Label(
+            pad, text=body[:160], bg="#2a3140", fg="#b8c0cc",
+            font=("Microsoft YaHei UI", 9), wraplength=320, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+    tw.update_idletasks()
+    sw = tw.winfo_screenwidth()
+    sh = tw.winfo_screenheight()
+    w, h = tw.winfo_width(), tw.winfo_height()
+    tw.geometry(f"+{max(8, sw - w - 24)}+{max(8, sh - h - 80)}")
+    tw.after(2800, tw.destroy)
 
 
 def run_bg(fn) -> None:
@@ -101,6 +131,7 @@ def read_mode() -> None:
     if corr_mode_var:
         CFG["correction_mode"] = corr_mode_var.get()
         save_config(CFG)
+    refresh_tip_label()
 
 
 def grab_b64() -> str:
@@ -111,7 +142,7 @@ def grab_b64() -> str:
         shot = sct.grab(sct.monitors[idx])
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
     w, h = img.size
-    src = (CFG.get("ocr_source") or "chat").lower()
+    src = (CFG.get("ocr_source") or "map").lower()
     if src in ("chat", "chat_coords"):
         lf = float(CFG.get("chat_left_frac", 0))
         wf = float(CFG.get("chat_width_frac", 0.5))
@@ -134,6 +165,12 @@ def grab_b64() -> str:
     max_w = int(CFG.get("ocr_max_width") or 1280)
     if w > max_w:
         img = img.resize((max_w, max(1, int(h * max_w / w))), Image.Resampling.LANCZOS)
+    if CFG.get("save_ocr_debug"):
+        debug_path = app_dir() / "last_ocr_shot.jpg"
+        try:
+            img.save(debug_path, format="JPEG", quality=85)
+        except OSError:
+            pass
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=82)
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
@@ -185,8 +222,7 @@ def _last_xy_from_text(text: str) -> dict | None:
 
 
 def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
-    if d.get("error"):
-        return None, str(d["error"])[:100]
+    err = str(d.get("error") or "")
     p = d.get(role)
     if isinstance(p, dict) and p.get("x") is not None:
         return p, ""
@@ -209,11 +245,13 @@ def pick_point(d: dict, role: str) -> tuple[dict | None, str]:
                     return pick, ""
         except requests.RequestException:
             pass
-    return None, "未识别坐标：F12藏窗，对准聊天框📍行再按"
+    if err and not d.get("ocr_text"):
+        return None, err[:100]
+    return None, "未识别坐标：F12藏窗，十字对准地图点再按"
 
 
 def _ocr_capture_mode() -> str:
-    src = (CFG.get("ocr_source") or "chat").lower()
+    src = (CFG.get("ocr_source") or "map").lower()
     return "chat_coords" if src in ("chat", "chat_coords") else "crosshair_map"
 
 
@@ -260,6 +298,25 @@ def api_calc() -> dict:
     return r.json()
 
 
+def _tip_text() -> str:
+    dual = corr_mode_var and corr_mode_var.get() == "dual"
+    if dual:
+        return (
+            "【实验·两发】F1炮→F2目→按诸元打目标→F3登记落点→"
+            "炮口转约90°、RNG/MIL不变打检查点→F4登记；偏差可能较大。"
+            " F12藏窗后仍会弹提示。"
+        )
+    return (
+        "F1炮位 · F2目标 · F3单发落点 · F12藏窗 · 十字对准地图白字再按键。"
+        " 未填ASL时SPH默认建议高支过障。"
+    )
+
+
+def refresh_tip_label() -> None:
+    if tip_label:
+        tip_label.config(text=_tip_text())
+
+
 def sol_one_liner(sol: dict) -> str:
     az = sol.get("azimuth_deg")
     dist = sol.get("distance_m")
@@ -284,14 +341,27 @@ def sol_one_liner(sol: dict) -> str:
             parts.append(f"MIL {mil}")
     eff = sol.get("effective_arc")
     if eff in ("low", "high") and len(spg) >= 2:
-        parts.append(f"首发用{eff}")
+        hint = "首发建议高支" if eff == "high" else f"首发用{eff}"
+        parts.append(hint)
     return " · ".join(parts) if parts else "诸元已更新"
 
 
 def corr_one_liner(c: dict) -> str:
+    az = c.get("new_azimuth_deg")
+    pairs = c.get("correction_pairs") or []
+    spg = [p for p in pairs if p.get("arc") in ("low", "high") and p.get("new_rng_m") is not None]
+    if len(spg) >= 2:
+        chunks = []
+        for p in spg:
+            tag = "低支" if p["arc"] == "low" else "高支"
+            chunks.append(f"{tag} RNG→{p['new_rng_m']}/MIL→{p['new_mil']}")
+        head = "修正："
+        if az is not None:
+            head += f"方位→{round(az, 1)}° · "
+        return head + " | ".join(chunks)
     parts = []
-    if c.get("new_azimuth_deg") is not None:
-        parts.append(f"方位→{round(c['new_azimuth_deg'], 1)}°")
+    if az is not None:
+        parts.append(f"方位→{round(az, 1)}°")
     if c.get("new_rng_m") is not None:
         parts.append(f"RNG→{c['new_rng_m']}")
     if c.get("new_mil") is not None:
@@ -476,11 +546,11 @@ def ensure_api_url() -> None:
 
 
 def build_ui(root: tk.Tk) -> None:
-    global main_var, sub_var, corr_mode_var, gun_alt_var, target_alt_var
+    global main_var, sub_var, corr_mode_var, gun_alt_var, target_alt_var, tip_label
 
     root.title("FireMind")
     root.attributes("-topmost", True)
-    root.geometry("420x168+24+24")
+    root.geometry("440x210+24+24")
     root.configure(bg="#1a1d24")
 
     frm = tk.Frame(root, bg="#1a1d24", padx=10, pady=8)
@@ -511,14 +581,15 @@ def build_ui(root: tk.Tk) -> None:
 
     main_var = tk.StringVar(value="F1炮 F2目 F3/F4落点")
     sub_var = tk.StringVar(value="就绪")
-    tip = "F1炮F2目F3落·F12藏窗·只截左下聊天📍x,y·勿露大地图十字"
-    tk.Label(frm, text=tip, bg="#1a1d24", fg="#7a828a", font=("Segoe UI", 7), wraplength=400, justify="left").pack(
-        anchor="w", pady=(4, 0)
+    tip_label = tk.Label(
+        frm, text=_tip_text(), bg="#1a1d24", fg="#9aa3ad",
+        font=("Microsoft YaHei UI", 9), wraplength=420, justify="left",
     )
-    tk.Label(frm, textvariable=main_var, bg="#1a1d24", fg="#fff", font=("Consolas", 11, "bold"), wraplength=400, justify="left").pack(
-        anchor="w", pady=(4, 1)
+    tip_label.pack(anchor="w", pady=(6, 0))
+    tk.Label(frm, textvariable=main_var, bg="#1a1d24", fg="#fff", font=("Consolas", 10, "bold"), wraplength=420, justify="left").pack(
+        anchor="w", pady=(6, 2)
     )
-    tk.Label(frm, textvariable=sub_var, bg="#1a1d24", fg="#9aa0a6", font=("Segoe UI", 8), wraplength=400, justify="left").pack(anchor="w")
+    tk.Label(frm, textvariable=sub_var, bg="#1a1d24", fg="#9aa0a6", font=("Segoe UI", 9), wraplength=420, justify="left").pack(anchor="w")
 
 
 def main() -> None:
