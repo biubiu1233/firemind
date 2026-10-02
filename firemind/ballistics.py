@@ -177,6 +177,42 @@ class BallisticsEngine:
             grouped.setdefault(dist, []).append(mil)
         return sorted(grouped.items())
 
+    def _table_dial_pair(
+        self, table: list[list[float]], map_distance_m: float
+    ) -> dict[str, Any] | None:
+        """射表 [HUD左RNG, 右MIL] 对 map 距离插值；高/低支共用同一地图距离。"""
+        if not table or not math.isfinite(map_distance_m):
+            return None
+        groups = self._group_table(table)
+        eps = 1e-6
+        for dist, mils in groups:
+            if abs(dist - map_distance_m) <= eps:
+                mil = sum(mils) / len(mils)
+                return {
+                    "map_range_m": int(round(map_distance_m)),
+                    "sight_rng_m": int(round(dist)),
+                    "mil": int(round(mil)),
+                }
+        for i in range(len(groups) - 1):
+            d1, m1s = groups[i]
+            d2, m2s = groups[i + 1]
+            lo, hi = min(d1, d2), max(d1, d2)
+            if lo + eps < map_distance_m < hi - eps or abs(map_distance_m - lo) <= eps or abs(map_distance_m - hi) <= eps:
+                if abs(d2 - d1) < eps:
+                    continue
+                factor = (map_distance_m - d1) / (d2 - d1)
+                sight_rng = d1 + factor * (d2 - d1)
+                right_avg = sum(m2s) / len(m2s)
+                left_mil = min(m1s, key=lambda v: abs(v - right_avg))
+                right_mil = min(m2s, key=lambda v: abs(v - left_mil))
+                mil = left_mil + factor * (right_mil - left_mil)
+                return {
+                    "map_range_m": int(round(map_distance_m)),
+                    "sight_rng_m": int(round(sight_rng)),
+                    "mil": int(round(mil)),
+                }
+        return None
+
     @staticmethod
     def _mil_solution_to_dial(solution: MilSolution | None, distance_m: float) -> dict[str, Any] | None:
         if not solution:
@@ -185,7 +221,6 @@ class BallisticsEngine:
         if mil is None:
             return None
         mil_int = int(round(mil))
-        # 射表第一列 = 平地瞄距 RNG；与 MIL 成对出现（数字不必相等）
         rng_m = int(round(distance_m))
         return {
             "map_range_m": rng_m,
@@ -271,22 +306,14 @@ class BallisticsEngine:
         want = preferred_arc if preferred_arc in ("low", "high") else None
 
         if want == "low":
-            mid_prefer_high_until = float(meta.get("auto_prefer_high_until_m", 1750))
-            if (
-                high_ok
-                and distance_m + 0.5 < mid_prefer_high_until
-            ):
-                extra.append(
-                    f"约 {int(mid_prefer_high_until)}m 内首发不建议低弹道（易与刻度混用导致大偏差），"
-                    f"已改为高弹道读数；确认高弹道命中后再手动选低弹道。"
-                )
-                return "high", extra
             if low_ok and distance_m + 0.5 >= practical_min:
+                extra.append(
+                    "已选低支：抬炮幅度较小，左RNG随右MIL升高（未过最大射程点）。"
+                )
                 return "low", extra
             if high_ok:
                 extra.append(
-                    f"所选低弹道在此距离（约 {round(distance_m)}m）不可达或不可靠，"
-                    f"已按高弹道读数；请切高弹道模式。"
+                    f"低支在此距离（约 {round(distance_m)}m）不可用，已改高支读数。"
                 )
                 return "high", extra
             return ("low" if low_ok else None), extra
@@ -295,21 +322,18 @@ class BallisticsEngine:
             if high_ok:
                 return "high", extra
             if low_ok:
-                extra.append("高弹道不可用，已改为低弹道读数。")
+                extra.append("高支不可用，已改为低支读数。")
                 return "low", extra
             return None, extra
 
-        # 自动：近距仅高弹道；中距首发优先高弹道（低弹道刻度易与 HUD 表混淆）
-        mid_prefer_high_until = float(meta.get("auto_prefer_high_until_m", 1750))
+        # 自动：低于低弹道实用射程 → 高弹道；否则优先低弹道（RNG 与右 MIL 20–600 成对）
         if high_ok and (not low_ok or distance_m + 0.5 < practical_min):
             return "high", extra
-        if high_ok and distance_m + 0.5 < mid_prefer_high_until:
+        if low_ok and distance_m + 0.5 >= practical_min:
             extra.append(
-                f"自动模式：{int(mid_prefer_high_until)}m 内首发建议高弹道，"
-                "确认命中后再切低弹道复算。"
+                "自动：首发建议低支（抬炮至左RNG仍升高段，右MIL较小）。"
+                "需高支读数请在 config.json 设 \"arc\": \"high\"。"
             )
-            return "high", extra
-        if low_ok:
             return "low", extra
         if high_ok:
             return "high", extra
@@ -404,11 +428,21 @@ class BallisticsEngine:
                 dial_pairs.append({"arc": "single", **pair})
                 sight_rng_m = pair["sight_rng_m"]
                 mil_dial = pair["mil"]
-        if low:
+        low_table = ballistics.get("low", [])
+        high_table = ballistics.get("high", [])
+        if weapon_id == "spg" and low_table:
+            pair = self._table_dial_pair(low_table, distance_m)
+            if pair:
+                dial_pairs.append({"arc": "low", **pair})
+        elif low:
             pair = self._mil_solution_to_dial(low, distance_m)
             if pair:
                 dial_pairs.append({"arc": "low", **pair})
-        if high:
+        if weapon_id == "spg" and high_table:
+            pair = self._table_dial_pair(high_table, distance_m)
+            if pair:
+                dial_pairs.append({"arc": "high", **pair})
+        elif high:
             pair = self._mil_solution_to_dial(high, distance_m)
             if pair:
                 dial_pairs.append({"arc": "high", **pair})
@@ -419,25 +453,12 @@ class BallisticsEngine:
                     sight_rng_m = p["sight_rng_m"]
                     mil_dial = p["mil"]
                     break
-            if mil_dial is not None:
-                if effective_arc == "low" and mil_dial >= 610:
-                    warnings.insert(
-                        0,
-                        "严重：当前为低弹道方案，但 MIL 落在高弹道区间（≥610）。"
-                        "若在【高弹道】模式下误用 ~119–200 的读数，落点常会偏近数百米。",
-                    )
-                elif effective_arc == "high" and mil_dial <= 600:
-                    warnings.insert(
-                        0,
-                        "严重：当前为高弹道方案，但 MIL 落在低弹道区间（≤600）。"
-                        "请切到高弹道后再设 MIL 1100+。",
-                    )
-                elif effective_arc == "low" and mil_dial <= 600:
-                    warnings.insert(
-                        0,
-                        "低弹道：务必在游戏内切【低弹道】后再设右 MIL（20–600）。"
-                        "高/低模式与刻度必须一致，否则会出现数百米级偏差。",
-                    )
+            if mil_dial is not None and len(dial_pairs) >= 2:
+                warnings.insert(
+                    0,
+                    "同距离有两套读数：低支=抬炮未过RNG顶点；高支=继续抬高后左RNG回落。"
+                    "请与炮镜上实际抬炮幅度一致，勿混用两支的 RNG/MIL。",
+                )
         elif dial_pairs:
             p = dial_pairs[0]
             sight_rng_m = p["sight_rng_m"]
@@ -451,26 +472,12 @@ class BallisticsEngine:
                 "方向优先用地图中键标记 + 准星对准白色标记。"
             )
         arc_mode_hint = None
-        if weapon_id == "spg" and effective_arc:
-            if effective_arc == "high":
-                arc_mode_hint = (
-                    "游戏内先切换到高弹道模式；右刻度 MIL 使用 610–1390 区间读数，"
-                    "勿与低弹道（20–600）混用。"
-                )
-            else:
-                arc_mode_hint = (
-                    "游戏内先切换到低弹道模式；右刻度 MIL 使用 20–600 区间读数，"
-                    "勿与高弹道（610–1390）混用。"
-                )
+        if weapon_id == "spg":
+            branch = "低支" if effective_arc == "low" else "高支" if effective_arc == "high" else "—"
             aiming_note = (
-                f"SPH-2：{arc_mode_hint} "
-                f"本次建议左 RNG {sight_rng_m or int(round(distance_m))} m + "
-                f"右 MIL {mil_dial or '—'}；射击前停平车体。"
-            )
-        elif weapon_id == "spg":
-            aiming_note = (
-                "SPH-2：按方位角转炮；高/低弹道对应两套 MIL 刻度，必须成对设置。"
-                "平地上左 RNG 应接近地图水平距离；射击前停平车体。"
+                "SPH-2：游戏内无弹道开关；抬高炮管时左RNG先升后降，右MIL一直升。"
+                f"过最大射程点后为高支。本次主用{branch}：左RNG {sight_rng_m or '—'} + 右MIL {mil_dial or '—'}；"
+                "若有两套读数，选与当前抬炮幅度一致的一支。射击前停平车体。"
             )
 
         return FiringSolution(
