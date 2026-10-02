@@ -26,7 +26,8 @@ def extract_coord_pairs(text: str) -> list[tuple[Point, int, str]]:
     seen: set[tuple[float, float]] = set()
 
     patterns = [
-        re.compile(rf"x\s*[:=]?\s*({_NUM})\s*[,，\s]+\s*y\s*[:=]?\s*({_NUM})", re.I),
+        re.compile(rf"📍?\s*x\s*[:=]?\s*({_NUM})\s*[,，\s]+\s*y\s*[:=]?\s*({_NUM})", re.I),
+        re.compile(rf"x\s*({_NUM})\s*,\s*y\s*({_NUM})", re.I),
         re.compile(
             rf"(?:炮位|目标|迫击炮|攀枝花|我方|gun|target|origin)"
             rf"[:：\s]*({_NUM})\s*[,，]\s*({_NUM})",

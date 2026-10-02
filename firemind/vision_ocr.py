@@ -141,13 +141,20 @@ def ocr_map_image(
             if not (0 <= x <= 164 and 0 <= y <= 164):
                 continue
             points.append({"x": x, "y": y, "label": raw.get("label") or "unknown"})
-    out: dict[str, Any] = {"points": points}
-    pick = points[0] if points else None
-    if not pick:
-        pairs = extract_coord_pairs(text)
-        if pairs:
-            pick = {"x": pairs[0][0].x, "y": pairs[0][0].y, "label": "unknown"}
-            out["points"] = [pick]
+    out: dict[str, Any] = {"points": points, "ocr_text": text[:2000]}
+    chat_mode = capture_mode in ("chat_coords", "chat")
+    pairs = extract_coord_pairs(text)
+    pick = None
+    if chat_mode and pairs:
+        pt = pairs[-1][0]
+        pick = {"x": pt.x, "y": pt.y, "label": "unknown"}
+        out["points"] = [pick]
+    elif points:
+        pick = points[0]
+    elif pairs:
+        pt = pairs[-1][0] if chat_mode else pairs[0][0]
+        pick = {"x": pt.x, "y": pt.y, "label": "unknown"}
+        out["points"] = [pick]
     if pick and role in ("gun", "target", "impact"):
         out[role] = pick
     return out

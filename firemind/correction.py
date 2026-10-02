@@ -398,6 +398,24 @@ def suggest_correction_from_impact(
         solution.target,
         impact,
     )
+    max_ok = max(350.0, solution.distance_m * 0.35)
+    if abs(analysis.lateral_m) > max_ok or abs(analysis.range_m) > max_ok:
+        bad = CorrectionResult(
+            lateral_m=analysis.lateral_m,
+            range_m=analysis.range_m,
+            new_azimuth_deg=None,
+            mil_delta=None,
+            new_mil=None,
+            new_rng_m=None,
+            arc=solution.effective_arc or "low",
+            explanation=(
+                f"落点偏差异常（侧{abs(round(analysis.lateral_m))}m/距{abs(round(analysis.range_m))}m），"
+                "多半是 OCR 读错坐标。请用聊天框📍坐标或重新 F3；勿照此修正。"
+            ),
+            steps=[analysis.map_summary, analysis.line_summary, "已拒绝离谱修正"],
+            miss_analysis=analysis,
+        )
+        return bad
     use_arc = (
         arc
         or solution.effective_arc
